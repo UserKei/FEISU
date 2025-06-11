@@ -865,6 +865,18 @@ int main() {
             }
         });
 
+    // API端点：测试接口（为主页提供）
+    CROW_ROUTE(app, "/api/hello")
+        .methods("GET"_method)
+        ([] {
+            crow::json::wvalue result;
+            result["message"] = "Hello from C++ backend!";
+            result["status"] = "success";
+            crow::response res(result);
+            res.add_header("Content-Type", "application/json");
+            return res;
+        });
+
     // 启动服务器 (端口 8080)
     app.port(8080).multithreaded().run();
 

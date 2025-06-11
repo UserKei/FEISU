@@ -226,25 +226,27 @@
         const transitions = [];
         
         // 从ACTION表中提取shift动作（s开头的）
-        for (const [stateAndSymbol, action] of Object.entries(data.action_table)) {
-            const [state, symbol] = stateAndSymbol.split(',');
-            if (typeof action === 'string' && action.startsWith('s')) {
-                transitions.push({
-                    from: `I${state}`,
-                    to: `I${action.substring(1)}`,
-                    symbol
-                });
+        for (const [state, symbols] of Object.entries(data.action_table)) {
+            for (const [symbol, action] of Object.entries(symbols)) {
+                if (typeof action === 'string' && action.startsWith('s')) {
+                    transitions.push({
+                        from: `I${state}`,
+                        to: `I${action.substring(1)}`,
+                        symbol
+                    });
+                }
             }
         }
         
         // 从GOTO表中提取转换
-        for (const [stateAndSymbol, nextState] of Object.entries(data.goto_table)) {
-            const [state, symbol] = stateAndSymbol.split(',');
-            transitions.push({
-                from: `I${state}`,
-                to: `I${nextState}`,
-                symbol
-            });
+        for (const [state, symbols] of Object.entries(data.goto_table)) {
+            for (const [symbol, nextState] of Object.entries(symbols)) {
+                transitions.push({
+                    from: `I${state}`,
+                    to: `I${nextState}`,
+                    symbol
+                });
+            }
         }
         
         return transitions;
@@ -254,15 +256,16 @@
     function convertActionTable(actionTable) {
         const result = {};
         
-        for (const [key, value] of Object.entries(actionTable)) {
-            const [state, symbol] = key.split(',');
+        for (const [state, symbols] of Object.entries(actionTable)) {
             const stateKey = `I${state}`;
             
             if (!result[stateKey]) {
                 result[stateKey] = {};
             }
             
-            result[stateKey][symbol] = value;
+            for (const [symbol, value] of Object.entries(symbols)) {
+                result[stateKey][symbol] = value;
+            }
         }
         
         return result;
@@ -272,15 +275,16 @@
     function convertGotoTable(gotoTable) {
         const result = {};
         
-        for (const [key, value] of Object.entries(gotoTable)) {
-            const [state, symbol] = key.split(',');
+        for (const [state, symbols] of Object.entries(gotoTable)) {
             const stateKey = `I${state}`;
             
             if (!result[stateKey]) {
                 result[stateKey] = {};
             }
             
-            result[stateKey][symbol] = value;
+            for (const [symbol, value] of Object.entries(symbols)) {
+                result[stateKey][symbol] = value;
+            }
         }
         
         return result;
@@ -304,7 +308,7 @@
     
     // 计算FIRST和FOLLOW集的非终结符列表
     $: firstFollowNonTerminals = Object.keys(firstSets)
-        .filter(key => !["I", "$"].some(prefix => key.startsWith(prefix)) && key !== "#")
+        .filter(key => key && key !== "#" && !key.endsWith("'"))
         .sort();
     // 计算LR(0)和SLR(1)表的终结符和非终结符列表
     $: lr0ActionTerminals = getTerminals(lr0ActionTable);
@@ -725,7 +729,7 @@ F -> id"></textarea>
                         {#each firstFollowNonTerminals as nt}
                             <tr>
                                 <td>{nt}</td>
-                                <td>{`{ ${Object.keys(firstSets[nt] || {}).join(', ')} }`}</td>
+                                <td>{`{ ${(firstSets[nt] || []).join(', ')} }`}</td>
                             </tr>
                         {/each}
                     {:else}
@@ -749,7 +753,7 @@ F -> id"></textarea>
                         {#each firstFollowNonTerminals as nt}
                             <tr>
                                 <td>{nt}</td>
-                                <td>{`{ ${Object.keys(followSets[nt] || {}).join(', ')} }`}</td>
+                                <td>{`{ ${(followSets[nt] || []).join(', ')} }`}</td>
                             </tr>
                         {/each}
                     {:else}

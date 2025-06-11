@@ -1,38 +1,51 @@
 cmake_minimum_required(VERSION 3.10)
-project(backend)
+project(SLR1Parser)
 
-# 设置 vcpkg 工具链
-set(CMAKE_TOOLCHAIN_FILE "C:/Users/James/vcpkg/scripts/buildsystems/vcpkg.cmake")
-
-# 设置 C++ 标准
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 添加Windows 11的版本定义
-add_compile_definitions(_WIN32_WINNT=0x0A00)  # Windows 10/11
+# 对于macOS，添加编译器标志
+if(APPLE)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
+endif()
 
-# 设置UTF-8编码支持
-add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
-add_compile_definitions(_SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING)
+# 尝试找到Crow
+find_package(Crow QUIET)
 
-# 方法1: 使用正确目标名（首选）
-find_package(crow CONFIG REQUIRED)
+if(NOT Crow_FOUND)
+    # 如果找不到Crow，尝试使用pkg-config
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(CROW QUIET IMPORTED_TARGET crow)
+    endif()
+    
+    if(NOT CROW_FOUND)
+        # 如果都找不到，给出安装指导
+        message(FATAL_ERROR 
+            "Crow not found. Please install Crow framework:\n"
+            "  macOS: brew install crowcpp/crow/crow\n"
+            "  Ubuntu: sudo apt-get install libcrow-dev\n"
+            "  Or build from source: https://github.com/CrowCpp/Crow")
+    endif()
+endif()
 
-add_executable(backend main.cpp)
+# Add executable
+add_executable(slr1_parser main.cpp)
 
-# 尝试两种可能的目标名
-if(TARGET Crow::Crow)
-    target_link_libraries(backend PRIVATE Crow::Crow)
-elseif(TARGET crow::crow)
-    target_link_libraries(backend PRIVATE crow::crow)
+# Link libraries
+if(Crow_FOUND)
+    target_link_libraries(slr1_parser Crow::Crow)
 else()
-    # 方法2: 回退到手动配置
-    message(WARNING "Crow targets not found, using manual configuration")
-    include_directories("C:/Users/James/vcpkg/installed/x64-windows/include")
-    target_link_libraries(backend PRIVATE ws2_32 crypt32)
+    target_link_libraries(slr1_parser PkgConfig::CROW)
 endif()
 
-# Windows 特定设置
-if(WIN32)
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /SUBSYSTEM:CONSOLE")
+# macOS specific linking
+if(APPLE)
+    find_library(PTHREAD_LIB pthread)
+    if(PTHREAD_LIB)
+        target_link_libraries(slr1_parser ${PTHREAD_LIB})
+    endif()
 endif()
+
+# Enable debug info
+set(CMAKE_BUILD_TYPE Debug)
