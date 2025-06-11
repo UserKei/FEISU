@@ -1,0 +1,10 @@
+^C:\USERS\JAMES\DESKTOP\COMPILE_SLR\BACKEND\BUILD\CMAKEFILES\D3C382765D0D5FE71EE8FFC19D91538F\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/Users/James/Desktop/compile_slr/backend -BC:/Users/James/Desktop/compile_slr/backend/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/Users/James/Desktop/compile_slr/backend/build/backend.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
