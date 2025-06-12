@@ -58,8 +58,8 @@ namespace std {
     };
 }
 
-// LR(0)语法分析器类
-class SLR1Parser {
+// 语法分析器基类
+class ParserBase {
 public:
     // 文法组成部分
     set<string> nonTerminals;   // 非终结符集合
@@ -94,6 +94,27 @@ public:
 
     vector<ParseStep> parseSteps; // 存储分析过程
     bool parseResult;             // 分析结果
+
+    // 纯虚函数，由派生类实现
+    virtual void buildParseTable() = 0;
+
+    // 清理所有缓存数据
+    virtual void clearCache() {
+        nonTerminals.clear();
+        terminals.clear();
+        productions.clear();
+        startSymbol.clear();
+        augmentedStartSymbol.clear();
+        augmentedProductionIndex = -1;
+        
+        itemSets.clear();
+        actionTable.clear();
+        gotoTable.clear();
+        firstSet.clear();
+        followSet.clear();
+        parseSteps.clear();
+        parseResult = false;
+    }
 
     // 字符串分割函数
     vector<string> split(const string& s, char delimiter) {
@@ -352,9 +373,87 @@ public:
         }
     }
 
-    // 构建SLR(1)分析表
-    void buildParseTable() {
+    // 构建LR(0)分析表（纯LR(0)，不使用FOLLOW集）
+    virtual void buildLR0ParseTable() {
+        // 清理之前的缓存数据
         actionTable.clear();
+        gotoTable.clear();
+        itemSets.clear();
+        
+        buildItemSets();
+        
+        // 1. 处理移进和GOTO动作
+        set<string> allSymbols = terminals;
+        allSymbols.insert(nonTerminals.begin(), nonTerminals.end());
+        allSymbols.erase("ε");  // 移除ε符号
+        
+        for (size_t i = 0; i < itemSets.size(); i++) {
+            const set<Item>& itemSet = itemSets[i];
+            
+            // 处理所有可能的符号
+            for (const auto& symbol : allSymbols) {
+                set<Item> newSet = goTo(itemSet, symbol);
+                if (!newSet.empty()) {
+                    // 查找新项目集对应的状态索引
+                    auto it = find(itemSets.begin(), itemSets.end(), newSet);
+                    if (it != itemSets.end()) {
+                        int newIndex = static_cast<int>(distance(itemSets.begin(), it));
+                        
+                        if (isTerminal(symbol)) {
+                            // LR(0)移进动作 - 直接添加，不检查冲突
+                            string actionKey = "s" + to_string(newIndex);
+                            actionTable[{static_cast<int>(i), symbol}] = actionKey;
+                        } else {
+                            // GOTO动作
+                            gotoTable[{static_cast<int>(i), symbol}] = newIndex;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 2. 处理规约和接受动作（LR(0)方式）
+        for (size_t i = 0; i < itemSets.size(); i++) {
+            const set<Item>& itemSet = itemSets[i];
+            
+            for (const auto& item : itemSet) {
+                const Production& prod = productions[item.prodIndex];
+                
+                // 点在末尾（规约项目）
+                if (static_cast<size_t>(item.dotPos) == prod.right.size()) {
+                    // 接受项目：S' -> S·
+                    if (item.prodIndex == augmentedProductionIndex) {
+                        actionTable[{static_cast<int>(i), "#"}] = "acc";
+                    }
+                    // 规约项目 - LR(0)对所有终结符都添加规约动作
+                    else {
+                        string actionKey = "r" + to_string(item.prodIndex);
+                        for (const auto& term : terminals) {
+                            if (term == "ε") continue;
+                            
+                            // LR(0)直接添加规约动作，可能产生冲突
+                            auto existingAction = actionTable.find({static_cast<int>(i), term});
+                            if (existingAction != actionTable.end()) {
+                                // 报告冲突但继续执行
+                                cout << "LR(0) Conflict in state " << i << ", symbol " << term 
+                                     << ": " << existingAction->second << " vs " << actionKey << endl;
+                            }
+                            actionTable[{static_cast<int>(i), term}] = actionKey;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 构建SLR(1)分析表
+    virtual void buildSLR1ParseTable() {
+        // 清理之前的缓存数据
+        actionTable.clear();
+        gotoTable.clear();
+        firstSet.clear();
+        followSet.clear();
+        itemSets.clear();
         gotoTable.clear();
     
         computeFirstSets();
@@ -379,7 +478,7 @@ public:
                         int newIndex = static_cast<int>(distance(itemSets.begin(), it));
                         
                         if (isTerminal(symbol)) {
-                            // 移进动作 - 只添加不冲突的移进
+                            // SLR(1)移进动作 - 只添加不冲突的移进
                             string actionKey = "s" + to_string(newIndex);
                             auto existingAction = actionTable.find({static_cast<int>(i), symbol});
                             
@@ -408,7 +507,7 @@ public:
                     if (item.prodIndex == augmentedProductionIndex) {
                         actionTable[{static_cast<int>(i), "#"}] = "acc";
                     }
-                    // 规约项目
+                    // 规约项目 - SLR(1)使用FOLLOW集
                     else {
                         // 对该非终结符的FOLLOW集中的每个终结符添加规约动作
                         const set<string>& follow = followSet[prod.left];
@@ -780,6 +879,22 @@ private:
     }
 };
 
+// LR(0)语法分析器类
+class LR0Parser : public ParserBase {
+public:
+    void buildParseTable() {
+        buildLR0ParseTable();
+    }
+};
+
+// SLR(1)语法分析器类  
+class SLR1Parser : public ParserBase {
+public:
+    void buildParseTable() {
+        buildSLR1ParseTable();
+    }
+};
+
 // 解决CORS问题的中间件
 struct CORSMiddleware {
     struct context {};
@@ -803,12 +918,13 @@ int main() {
     // 使用中间件创建应用
     crow::App<CORSMiddleware> app;
 
-    SLR1Parser parser;
+    LR0Parser lr0Parser;
+    SLR1Parser slr1Parser;
 
     // API端点：加载文法
     CROW_ROUTE(app, "/api/load_grammar")
         .methods("POST"_method)
-        ([&parser](const crow::request& req) {
+        ([&lr0Parser, &slr1Parser](const crow::request& req) {
             auto body = crow::json::load(req.body);
             if (!body) {
                 return crow::response(400, "Invalid JSON");
@@ -820,7 +936,12 @@ int main() {
             }
 
             try {
-                parser.loadGrammar(grammar);
+                // 清理之前的缓存数据
+                lr0Parser.clearCache();
+                slr1Parser.clearCache();
+                
+                lr0Parser.loadGrammar(grammar);
+                slr1Parser.loadGrammar(grammar);
                 return crow::response(200, "Grammar loaded successfully");
             }
             catch (const exception& e) {
@@ -828,38 +949,82 @@ int main() {
             }
         });
 
-    // API端点：构建分析表
-    CROW_ROUTE(app, "/api/build_table")
+    // API端点：构建LR(0)分析表
+    CROW_ROUTE(app, "/api/build_lr0_table")
         .methods("GET"_method)
-        ([&parser] {
+        ([&lr0Parser] {
             try {
-                parser.buildParseTable();
-                return crow::response(200, "Parse table built successfully");
+                lr0Parser.buildParseTable();
+                return crow::response(200, "LR(0) Parse table built successfully");
             }
             catch (const exception& e) {
-                return crow::response(500, string("Error building parse table: ") + e.what());
+                return crow::response(500, string("Error building LR(0) parse table: ") + e.what());
             }
         });
 
-    // API端点：获取分析表数据
-    CROW_ROUTE(app, "/api/get_table_data")
+    // API端点：构建SLR(1)分析表
+    CROW_ROUTE(app, "/api/build_table")
         .methods("GET"_method)
-        ([&parser] {
+        ([&slr1Parser] {
             try {
-                auto json = parser.toJson();
+                slr1Parser.buildParseTable();
+                return crow::response(200, "SLR(1) Parse table built successfully");
+            }
+            catch (const exception& e) {
+                return crow::response(500, string("Error building SLR(1) parse table: ") + e.what());
+            }
+        });
+
+    // API端点：清理缓存
+    CROW_ROUTE(app, "/api/clear_cache")
+        .methods("POST"_method)
+        ([&lr0Parser, &slr1Parser] {
+            try {
+                lr0Parser.clearCache();
+                slr1Parser.clearCache();
+                return crow::response(200, "Cache cleared successfully");
+            }
+            catch (const exception& e) {
+                return crow::response(500, string("Error clearing cache: ") + e.what());
+            }
+        });
+
+    // API端点：获取LR(0)分析表数据
+    CROW_ROUTE(app, "/api/get_lr0_table_data")
+        .methods("GET"_method)
+        ([&lr0Parser] {
+            try {
+                auto json = lr0Parser.toJson();
+                json["parser_type"] = "LR(0)";
                 crow::response res(json);
                 res.add_header("Content-Type", "application/json");
                 return res;
             }
             catch (const exception& e) {
-                return crow::response(500, string("Error getting table data: ") + e.what());
+                return crow::response(500, string("Error getting LR(0) table data: ") + e.what());
             }
         });
 
-    // API端点：分析输入字符串
-    CROW_ROUTE(app, "/api/parse_input")
+    // API端点：获取SLR(1)分析表数据
+    CROW_ROUTE(app, "/api/get_table_data")
+        .methods("GET"_method)
+        ([&slr1Parser] {
+            try {
+                auto json = slr1Parser.toJson();
+                json["parser_type"] = "SLR(1)";
+                crow::response res(json);
+                res.add_header("Content-Type", "application/json");
+                return res;
+            }
+            catch (const exception& e) {
+                return crow::response(500, string("Error getting SLR(1) table data: ") + e.what());
+            }
+        });
+
+    // API端点：使用LR(0)分析输入字符串
+    CROW_ROUTE(app, "/api/parse_input_lr0")
         .methods("POST"_method)
-        ([&parser](const crow::request& req) {
+        ([&lr0Parser](const crow::request& req) {
             auto body = crow::json::load(req.body);
             if (!body || !body.has("input")) {
                 return crow::response(400, "Invalid JSON or missing 'input' field");
@@ -867,14 +1032,38 @@ int main() {
 
             try {
                 string input = body["input"].s();
-                parser.parse(input);
-                auto json = parser.toJson();
+                lr0Parser.parse(input);
+                auto json = lr0Parser.toJson();
+                json["parser_type"] = "LR(0)";
                 crow::response res(json);
                 res.add_header("Content-Type", "application/json");
                 return res;
             }
             catch (const exception& e) {
-                return crow::response(500, string("Error parsing input: ") + e.what());
+                return crow::response(500, string("Error parsing input with LR(0): ") + e.what());
+            }
+        });
+
+    // API端点：使用SLR(1)分析输入字符串
+    CROW_ROUTE(app, "/api/parse_input")
+        .methods("POST"_method)
+        ([&slr1Parser](const crow::request& req) {
+            auto body = crow::json::load(req.body);
+            if (!body || !body.has("input")) {
+                return crow::response(400, "Invalid JSON or missing 'input' field");
+            }
+
+            try {
+                string input = body["input"].s();
+                slr1Parser.parse(input);
+                auto json = slr1Parser.toJson();
+                json["parser_type"] = "SLR(1)";
+                crow::response res(json);
+                res.add_header("Content-Type", "application/json");
+                return res;
+            }
+            catch (const exception& e) {
+                return crow::response(500, string("Error parsing input with SLR(1): ") + e.what());
             }
         });
 

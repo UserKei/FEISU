@@ -1,7 +1,7 @@
 {
 	"InstallScripts" : 
 	[
-		"C:/Users/James/Desktop/compile_slr/backend/build/cmake_install.cmake"
+		"/Users/kei/Project/FEISU/backend/build/cmake_install.cmake"
 	],
 	"Parallel" : false
 }

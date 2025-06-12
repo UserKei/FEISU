@@ -91,53 +91,70 @@
         loading = false;
     }
 }
-    
-    // 构建分析表
+     // 构建分析表
     async function buildParseTable() {
-    loading = true;
-    error = null;
-    try {
-        // 构建分析表
-        let response = await fetch('/api/build_table', { method: 'GET' });
-        
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(errorText || 'Failed to build parse table');
-        }
-        
-        // 返回纯文本消息
-        const buildResult = await response.text();
-        alert(buildResult);
-        
-        // 获取分析表数据（这次需要JSON）
-        response = await fetch('/api/get_table_data', { method: 'GET' });
-        
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(errorText || 'Failed to get table data');
-        }
-        
-        // 正确解析JSON响应
-        const data = await response.json();
-        
-        // 更新前端状态
-        augmentedGrammar = generateAugmentedGrammar(data);
-        firstSets = data.first_set;
-        followSets = data.follow_set;
+        loading = true;
+        error = null;
+        try {
+            // 构建LR(0)分析表
+            let response = await fetch('/api/build_lr0_table', { method: 'GET' });
             
-            // 格式化项目集族
-            lr0DfaStates = formatItemSets(data.item_sets);
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText || 'Failed to build LR(0) parse table');
+            }
+            
+            const lr0BuildResult = await response.text();
+            
+            // 构建SLR(1)分析表
+            response = await fetch('/api/build_table', { method: 'GET' });
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText || 'Failed to build SLR(1) parse table');
+            }
+            
+            const slr1BuildResult = await response.text();
+            alert(`${lr0BuildResult}\n${slr1BuildResult}`);
+            
+            // 获取LR(0)分析表数据
+            response = await fetch('/api/get_lr0_table_data', { method: 'GET' });
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText || 'Failed to get LR(0) table data');
+            }
+            
+            const lr0Data = await response.json();
+            
+            // 获取SLR(1)分析表数据
+            response = await fetch('/api/get_table_data', { method: 'GET' });
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText || 'Failed to get SLR(1) table data');
+            }
+            
+            const slr1Data = await response.json();
+            
+            // 更新前端状态（使用SLR(1)数据作为基础，因为它包含FIRST/FOLLOW集）
+            augmentedGrammar = generateAugmentedGrammar(slr1Data);
+            firstSets = slr1Data.first_set;
+            followSets = slr1Data.follow_set;
+                
+            // 格式化项目集族（LR(0)和SLR(1)使用相同的项目集族）
+            lr0DfaStates = formatItemSets(slr1Data.item_sets);
             
             // 格式化转换关系
-            lr0DfaTransitions = formatTransitions(data);
+            lr0DfaTransitions = formatTransitions(slr1Data);
             
-            // 转换分析表格式
-            lr0ActionTable = convertActionTable(data.action_table);
-            lr0GotoTable = convertGotoTable(data.goto_table);
+            // 转换LR(0)分析表格式
+            lr0ActionTable = convertActionTable(lr0Data.action_table);
+            lr0GotoTable = convertGotoTable(lr0Data.goto_table);
             
-            // SLR(1)表格相同（在实际项目中可能需要特殊处理）
-            slr1ActionTable = {...lr0ActionTable};
-            slr1GotoTable = {...lr0GotoTable};
+            // 转换SLR(1)分析表格式
+            slr1ActionTable = convertActionTable(slr1Data.action_table);
+            slr1GotoTable = convertGotoTable(slr1Data.goto_table);
             
             // 导航到FIRST和FOLLOW集
             navigateTo('first-follow');
@@ -707,6 +724,7 @@ F -> id"></textarea>
             <div class="btn-group">
                 <button on:click={handleGrammarSubmit}>加载文法</button>
                 <button on:click={buildParseTable} disabled={!grammarInput}>构建分析表</button>
+                <button on:click={handleClearCache} style="background: linear-gradient(to right, #e74c3c, #c0392b);">清理缓存</button>
             </div>
         </section>
 
