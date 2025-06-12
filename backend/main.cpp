@@ -22,12 +22,14 @@ using namespace std;
 
 // 文法产生式结构体
 struct Production {
-    string left;           // 产生式左部
-    vector<string> right;  // 产生式右部符号序列
+    string left;
+    vector<string> right;
 
-    // 检查是否为ε产生式
+    // 修复ε产生式检测
     bool isEpsilon() const {
-        return right.empty() || (right.size() == 1 && right[0] == "ε");
+        if (right.empty()) return true;
+        if (right.size() == 1 && right[0] == "ε") return true;
+        return false;
     }
 };
 
@@ -174,50 +176,44 @@ public:
     // 构建LR(0)项目集族
     void buildItemSets() {
         itemSets.clear();
-        queue<int> unprocessedSets; // 待处理的项目集索引
-
-        // 创建初始项目集：S' -> ·S
+        queue<int> unprocessedSets;
+        map<set<Item>, int> itemSetMap;  // 用于跟踪项目集和状态的映射
+    
+        // 创建初始项目集
         set<Item> initialSet;
         initialSet.insert({ augmentedProductionIndex, 0 });
-        itemSets.push_back(closure(initialSet));
+        initialSet = closure(initialSet);
+        itemSets.push_back(initialSet);
+        itemSetMap[initialSet] = 0;
         unprocessedSets.push(0);
-
-        // 处理项目集直到队列为空
+    
         while (!unprocessedSets.empty()) {
             int currentIndex = unprocessedSets.front();
             unprocessedSets.pop();
             set<Item> currentSet = itemSets[currentIndex];
-
-            // 尝试所有可能的符号（终结符和非终结符）
+    
             set<string> allSymbols = terminals;
             allSymbols.insert(nonTerminals.begin(), nonTerminals.end());
-
+            allSymbols.erase("ε");  // 移除ε符号
+    
             for (const auto& symbol : allSymbols) {
                 set<Item> newSet = goTo(currentSet, symbol);
-
+    
                 if (!newSet.empty()) {
                     // 检查新项目集是否已存在
-                    auto it = find(itemSets.begin(), itemSets.end(), newSet);
+                    auto it = itemSetMap.find(newSet);
                     int newIndex;
-
-                    if (it == itemSets.end()) {
-                        // 新项目集
+    
+                    if (it == itemSetMap.end()) {
                         newIndex = static_cast<int>(itemSets.size());
                         itemSets.push_back(newSet);
+                        itemSetMap[newSet] = newIndex;
                         unprocessedSets.push(newIndex);
+                    } else {
+                        newIndex = it->second;
                     }
-                    else {
-                        // 已有项目集
-                        newIndex = static_cast<int>(distance(itemSets.begin(), it));
-                    }
-
-                    // 记录转移关系（在构建分析表时使用）
-                    if (isTerminal(symbol)) {
-                        actionTable[{currentIndex, symbol}] = "s" + to_string(newIndex);
-                    }
-                    else {
-                        gotoTable[{currentIndex, symbol}] = newIndex;
-                    }
+    
+                    // 不再在此处修改actionTable和gotoTable
                 }
             }
         }
@@ -300,58 +296,50 @@ public:
         for (const auto& nt : nonTerminals) {
             followSet[nt] = {};
         }
-        // 开始符号的FOLLOW集包含#
         followSet[startSymbol].insert("#");
-
+    
         bool changed = true;
         while (changed) {
             changed = false;
             for (const auto& prod : productions) {
                 const string& left = prod.left;
                 const vector<string>& right = prod.right;
-
-                // 对于右部中的每个非终结符
+    
                 for (size_t i = 0; i < right.size(); i++) {
                     const string& symbol = right[i];
-                    if (!nonTerminals.count(symbol)) continue; // 跳过终结符
-
-                    bool epsilonTillEnd = true;
-                    // 扫描后续符号
+                    if (!nonTerminals.count(symbol)) continue;
+    
+                    bool allCanBeEpsilon = true;
                     for (size_t j = i + 1; j < right.size(); j++) {
                         const string& next = right[j];
-
-                        // 如果下一个是终结符
-                        if (isTerminal(next) && next != "ε") {
-                            // 添加到当前符号的FOLLOW集
+                        
+                        // 添加FIRST(next) - {ε} 到FOLLOW(symbol)
+                        if (terminals.count(next) && next != "ε") {
                             if (!followSet[symbol].count(next)) {
                                 followSet[symbol].insert(next);
                                 changed = true;
                             }
-                            epsilonTillEnd = false;
+                            allCanBeEpsilon = false;
                             break;
                         }
-
+    
                         // 非终结符
-                        const set<string>& nextFirst = firstSet[next];
-                        bool nextHasEpsilon = nextFirst.count("ε") > 0;
-
-                        // 将nextFirst中非ε元素添加到symbol的FOLLOW集
-                        for (const auto& s : nextFirst) {
+                        for (const auto& s : firstSet[next]) {
                             if (s != "ε" && !followSet[symbol].count(s)) {
                                 followSet[symbol].insert(s);
                                 changed = true;
                             }
                         }
-
-                        // 如果当前next没有ε，则停止
-                        if (!nextHasEpsilon) {
-                            epsilonTillEnd = false;
+    
+                        // 如果FIRST(next)不包含ε，则停止
+                        if (!firstSet[next].count("ε")) {
+                            allCanBeEpsilon = false;
                             break;
                         }
                     }
-
-                    // 如果从i+1到结尾都可以推导出ε，将左部的FOLLOW集添加过来
-                    if (epsilonTillEnd) {
+    
+                    // 特殊处理：产生式右部末尾的非终结符
+                    if (i == right.size() - 1 || allCanBeEpsilon) {
                         for (const auto& s : followSet[left]) {
                             if (!followSet[symbol].count(s)) {
                                 followSet[symbol].insert(s);
@@ -368,58 +356,80 @@ public:
     void buildParseTable() {
         actionTable.clear();
         gotoTable.clear();
-
-        // 先计算FIRST和FOLLOW集
+    
         computeFirstSets();
         computeFollowSets();
-
-        // 构建项目集族（会填充部分ACTION和GOTO表）
         buildItemSets();
-
-        // 处理规约和接受动作
+    
+        // 1. 处理移进和GOTO动作
+        set<string> allSymbols = terminals;
+        allSymbols.insert(nonTerminals.begin(), nonTerminals.end());
+        allSymbols.erase("ε");  // 移除ε符号
+    
         for (size_t i = 0; i < itemSets.size(); i++) {
             const set<Item>& itemSet = itemSets[i];
-
+            
+            // 处理所有可能的符号
+            for (const auto& symbol : allSymbols) {
+                set<Item> newSet = goTo(itemSet, symbol);
+                if (!newSet.empty()) {
+                    // 查找新项目集对应的状态索引
+                    auto it = find(itemSets.begin(), itemSets.end(), newSet);
+                    if (it != itemSets.end()) {
+                        int newIndex = static_cast<int>(distance(itemSets.begin(), it));
+                        
+                        if (isTerminal(symbol)) {
+                            // 移进动作 - 只添加不冲突的移进
+                            string actionKey = "s" + to_string(newIndex);
+                            auto existingAction = actionTable.find({static_cast<int>(i), symbol});
+                            
+                            if (existingAction == actionTable.end()) {
+                                actionTable[{static_cast<int>(i), symbol}] = actionKey;
+                            }
+                        } else {
+                            // GOTO动作
+                            gotoTable[{static_cast<int>(i), symbol}] = newIndex;
+                        }
+                    }
+                }
+            }
+        }
+    
+        // 2. 处理规约和接受动作
+        for (size_t i = 0; i < itemSets.size(); i++) {
+            const set<Item>& itemSet = itemSets[i];
+    
             for (const auto& item : itemSet) {
                 const Production& prod = productions[item.prodIndex];
-
+    
                 // 点在末尾（规约项目）
                 if (static_cast<size_t>(item.dotPos) == prod.right.size()) {
                     // 接受项目：S' -> S·
                     if (item.prodIndex == augmentedProductionIndex) {
-                        // 只在遇到#时接受
-                        if (actionTable.find({ static_cast<int>(i), "#" }) == actionTable.end()) {
-                            actionTable[{static_cast<int>(i), "#"}] = "acc";
-                        }
-                        else {
-                            throw runtime_error("Accept conflict in state " + to_string(i));
-                        }
+                        actionTable[{static_cast<int>(i), "#"}] = "acc";
                     }
                     // 规约项目
                     else {
                         // 对该非终结符的FOLLOW集中的每个终结符添加规约动作
                         const set<string>& follow = followSet[prod.left];
                         for (const auto& term : follow) {
-                            // 跳过ε
                             if (term == "ε") continue;
-
-                            // 检查是否已有动作
-                            auto it = actionTable.find({ static_cast<int>(i), term });
-                            if (it != actionTable.end()) {
-                                string currentAction = it->second;
-                                if (currentAction[0] == 's') {
-                                    throw runtime_error("Shift-reduce conflict in state " + to_string(i) + ", symbol " + term);
-                                }
-                                else if (currentAction[0] == 'r') {
-                                    throw runtime_error("Reduce-reduce conflict in state " + to_string(i) + ", symbol " + term);
-                                }
-                                else if (currentAction == "acc") {
-                                    throw runtime_error("Accept-reduce conflict in state " + to_string(i) + ", symbol " + term);
+                            
+                            string actionKey = "r" + to_string(item.prodIndex);
+                            auto existingAction = actionTable.find({static_cast<int>(i), term});
+                            
+                            // 解决移进-规约冲突：优先移进
+                            if (existingAction != actionTable.end()) {
+                                if (existingAction->second[0] == 's') {
+                                    // 保留移进动作，跳过规约
+                                    continue;
+                                } else if (existingAction->second[0] == 'r') {
+                                    throw runtime_error("Reduce-reduce conflict in state " + 
+                                        to_string(i) + ", symbol " + term);
                                 }
                             }
-                            else {
-                                actionTable[{static_cast<int>(i), term}] = "r" + to_string(item.prodIndex);
-                            }
+                            
+                            actionTable[{static_cast<int>(i), term}] = actionKey;
                         }
                     }
                 }
@@ -566,7 +576,10 @@ public:
 
                 // 弹出产生式右部
                 for (size_t i = 0; i < prod.right.size(); i++) {
-                    if (prod.right[i] == "ε") break; // ε产生式不需要弹出
+                    // 修复：正确处理ε产生式
+                    if (prod.isEpsilon()) {
+                        break; // 不需要弹出任何符号
+                    }
                     stateStack.pop();
                     symbolStack.pop();
                 }
